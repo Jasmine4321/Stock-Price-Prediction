@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+pydantic
+torch
+numpy
+pandas
+yfinance
+groq
+python-dotenv

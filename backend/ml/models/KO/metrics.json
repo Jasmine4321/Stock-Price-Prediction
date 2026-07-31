@@ -1,0 +1,7 @@
+{
+  "directional_accuracy": 0.4375,
+  "baseline_directional_accuracy": 0.3125,
+  "mae_pct": 2.0464510917663574,
+  "horizon_days": 5,
+  "test_samples": 176
+}

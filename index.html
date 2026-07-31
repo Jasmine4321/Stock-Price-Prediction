@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vantage — Stock Forecast</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #EEF0F4;
+    --panel: #FFFFFF;
+    --ink: #12151B;
+    --ink-soft: #5B616D;
+    --ink-faint: #8B909B;
+    --navy: #171B2C;
+    --navy-soft: #262C44;
+    --gold: #B8862F;
+    --up: #1E8E5A;
+    --up-bg: #E7F5EE;
+    --down: #C1443A;
+    --down-bg: #FBEAE8;
+    --flat: #6B7280;
+    --flat-bg: #EEF0F2;
+    --border: #DCE0E7;
+    --radius: 10px;
+    --font-display: 'Space Grotesk', sans-serif;
+    --font-body: 'Inter', sans-serif;
+    --font-mono: 'IBM Plex Mono', monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font-body); }
+  ::selection { background: var(--gold); color: #fff; }
+
+  a, button { font-family: inherit; }
+
+  .app { display: flex; min-height: 100vh; }
+
+  /* --- Nav rail --- */
+  .nav {
+    width: 220px; flex-shrink: 0; background: var(--navy); color: #fff;
+    display: flex; flex-direction: column; padding: 28px 16px;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 0 8px 28px; }
+  .brand-mark {
+    width: 30px; height: 30px; border-radius: 8px;
+    background: linear-gradient(135deg, var(--gold), #E0B65C);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--font-mono); font-weight: 600; color: var(--navy); font-size: 14px;
+  }
+  .brand-text { font-family: var(--font-display); font-weight: 600; font-size: 17px; }
+  .brand-tag { font-size: 10px; color: #8890A8; font-family: var(--font-mono); margin-top: -2px; }
+
+  .nav-item {
+    display: flex; align-items: center; gap: 10px; padding: 11px 12px; border-radius: 8px;
+    color: #B7BCCC; font-size: 14px; font-weight: 500; cursor: pointer; margin-bottom: 2px;
+    border: none; background: none; width: 100%; text-align: left;
+  }
+  .nav-item:hover { background: var(--navy-soft); color: #fff; }
+  .nav-item.active { background: var(--navy-soft); color: #fff; }
+  .nav-item .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--gold); opacity: 0; }
+  .nav-item.active .dot { opacity: 1; }
+
+  .nav-footer { margin-top: auto; padding: 12px 8px; font-size: 11px; color: #6B7290; line-height: 1.5; font-family: var(--font-mono); }
+  .nav-footer .status { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+  .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--flat); }
+  .status-dot.ok { background: var(--up); }
+  .status-dot.bad { background: var(--down); }
+
+  /* --- Main --- */
+  .main { flex: 1; padding: 36px 44px; max-width: 1000px; }
+  .page-title { font-family: var(--font-display); font-size: 26px; font-weight: 600; margin: 0 0 4px; }
+  .page-sub { color: var(--ink-soft); font-size: 14px; margin: 0 0 28px; }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 22px; margin-bottom: 18px;
+  }
+
+  /* --- Search page --- */
+  .search-row { display: flex; gap: 10px; margin-bottom: 18px; }
+  .search-input {
+    flex: 1; padding: 13px 16px; border: 1px solid var(--border); border-radius: var(--radius);
+    font-size: 15px; font-family: var(--font-body); background: var(--panel); color: var(--ink);
+  }
+  .search-input:focus { outline: none; border-color: var(--gold); }
+
+  .stock-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; }
+  .stock-card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 16px; cursor: pointer; transition: border-color .15s, transform .1s;
+  }
+  .stock-card:hover { border-color: var(--gold); }
+  .stock-card.selected { border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold); }
+  .stock-card .ticker { font-family: var(--font-mono); font-weight: 600; font-size: 15px; }
+  .stock-card .name { font-size: 12px; color: var(--ink-soft); margin-top: 2px; margin-bottom: 10px; }
+  .stock-card .price-row { display: flex; align-items: baseline; justify-content: space-between; }
+  .stock-card .price { font-family: var(--font-mono); font-size: 17px; font-weight: 600; }
+  .stock-card .change { font-family: var(--font-mono); font-size: 12px; padding: 2px 6px; border-radius: 5px; }
+  .change.up { color: var(--up); background: var(--up-bg); }
+  .change.down { color: var(--down); background: var(--down-bg); }
+  .stock-card .loading-line { height: 14px; background: var(--border); border-radius: 4px; width: 60%; }
+
+  .selected-panel { margin-top: 18px; }
+  .selected-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .selected-header h3 { font-family: var(--font-display); font-size: 20px; margin: 0; }
+  .btn-predict {
+    background: var(--navy); color: #fff; border: none; padding: 12px 22px; border-radius: 8px;
+    font-weight: 600; font-size: 14px; cursor: pointer; font-family: var(--font-body);
+  }
+  .btn-predict:hover { background: var(--navy-soft); }
+  .btn-predict:disabled { opacity: .5; cursor: not-allowed; }
+
+  /* --- Forecast page --- */
+  .forecast-header { display: flex; align-items: baseline; gap: 14px; margin-bottom: 6px; }
+  .forecast-ticker { font-family: var(--font-mono); font-size: 28px; font-weight: 600; }
+  .forecast-name { color: var(--ink-soft); font-size: 15px; }
+  .forecast-price { font-family: var(--font-mono); font-size: 22px; margin-bottom: 22px; }
+
+  /* confidence ribbon — signature element */
+  .ribbon-wrap { margin: 20px 0 26px; }
+  .ribbon-labels { display: flex; justify-content: space-between; font-family: var(--font-mono); font-size: 12px; color: var(--ink-soft); margin-bottom: 6px; }
+  .ribbon { position: relative; height: 34px; border-radius: 17px; background: linear-gradient(90deg, var(--down-bg), var(--flat-bg) 50%, var(--up-bg)); border: 1px solid var(--border); overflow: hidden; }
+  .ribbon-band { position: absolute; top: 0; bottom: 0; background: linear-gradient(90deg, rgba(184,134,47,.18), rgba(184,134,47,.42), rgba(184,134,47,.18)); border-left: 2px solid var(--gold); border-right: 2px solid var(--gold); }
+  .ribbon-marker { position: absolute; top: -3px; bottom: -3px; width: 3px; background: var(--navy); border-radius: 2px; }
+  .ribbon-caption { font-family: var(--font-mono); font-size: 11px; color: var(--ink-faint); margin-top: 6px; }
+
+  .prob-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px; }
+  .prob-card { border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; text-align: center; }
+  .prob-card .label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-soft); margin-bottom: 6px; }
+  .prob-card .value { font-family: var(--font-mono); font-size: 24px; font-weight: 600; }
+  .prob-card.up { border-color: var(--up); } .prob-card.up .value { color: var(--up); }
+  .prob-card.down { border-color: var(--down); } .prob-card.down .value { color: var(--down); }
+  .prob-card.flat .value { color: var(--flat); }
+
+  .metrics-row { display: flex; gap: 24px; padding-top: 16px; border-top: 1px solid var(--border); }
+  .metric { flex: 1; }
+  .metric .label { font-size: 11px; color: var(--ink-soft); margin-bottom: 4px; }
+  .metric .value { font-family: var(--font-mono); font-size: 16px; font-weight: 600; }
+  .metric .sub { font-family: var(--font-mono); font-size: 11px; color: var(--ink-faint); }
+
+  .disclaimer { font-size: 12px; color: var(--ink-faint); margin-top: 16px; line-height: 1.5; padding: 12px 14px; background: var(--flat-bg); border-radius: 8px; }
+
+  .empty-state { text-align: center; padding: 60px 20px; color: var(--ink-soft); }
+  .empty-state .icon { font-size: 32px; margin-bottom: 10px; }
+
+  /* --- Compare page --- */
+  .compare-picker { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+  .chip { padding: 8px 14px; border-radius: 20px; border: 1px solid var(--border); background: var(--panel); font-family: var(--font-mono); font-size: 13px; cursor: pointer; }
+  .chip.active { background: var(--navy); color: #fff; border-color: var(--navy); }
+  .compare-table { width: 100%; border-collapse: collapse; }
+  .compare-table th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-soft); padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  .compare-table td { padding: 12px 10px; border-bottom: 1px solid var(--border); font-family: var(--font-mono); font-size: 13px; }
+  .compare-table tr:last-child td { border-bottom: none; }
+  .compare-table .tname { font-family: var(--font-body); font-size: 12px; color: var(--ink-soft); }
+
+  .error-banner { background: var(--down-bg); color: var(--down); padding: 12px 16px; border-radius: 8px; font-size: 13px; margin-bottom: 16px; }
+  .spinner { width: 16px; height: 16px; border: 2px solid rgba(255,255,255,.35); border-top-color: #fff; border-radius: 50%; animation: spin .7s linear infinite; display: inline-block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* --- Chat widget --- */
+  .chat-fab {
+    position: fixed; bottom: 24px; right: 24px; width: 56px; height: 56px; border-radius: 50%;
+    background: var(--navy); color: #fff; border: none; cursor: pointer; font-size: 22px;
+    display: flex; align-items: center; justify-content: center; box-shadow: 0 6px 18px rgba(0,0,0,.2);
+    z-index: 50;
+  }
+  .chat-panel {
+    position: fixed; bottom: 92px; right: 24px; width: 360px; height: 480px; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 12px 32px rgba(0,0,0,.18);
+    display: none; flex-direction: column; overflow: hidden; z-index: 50;
+  }
+  .chat-panel.open { display: flex; }
+  .chat-head { background: var(--navy); color: #fff; padding: 14px 16px; }
+  .chat-head .t { font-family: var(--font-display); font-weight: 600; font-size: 14px; }
+  .chat-head .s { font-size: 11px; color: #9AA0B8; font-family: var(--font-mono); margin-top: 2px; }
+  .chat-body { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+  .msg { max-width: 85%; padding: 10px 12px; border-radius: 10px; font-size: 13px; line-height: 1.45; }
+  .msg.user { align-self: flex-end; background: var(--navy); color: #fff; border-bottom-right-radius: 3px; }
+  .msg.bot { align-self: flex-start; background: var(--flat-bg); color: var(--ink); border-bottom-left-radius: 3px; }
+  .msg.bot.err { background: var(--down-bg); color: var(--down); }
+  .chat-hint { font-size: 11px; color: var(--ink-faint); text-align: center; padding: 6px 0; }
+  .chat-input-row { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--border); }
+  .chat-input { flex: 1; border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; font-size: 13px; font-family: var(--font-body); }
+  .chat-input:focus { outline: none; border-color: var(--gold); }
+  .chat-send { background: var(--navy); color: #fff; border: none; border-radius: 8px; padding: 0 14px; cursor: pointer; font-size: 13px; }
+  .chat-send:disabled { opacity: .5; }
+
+  @media (max-width: 760px) {
+    .nav { width: 72px; padding: 20px 8px; }
+    .brand-text, .brand-tag, .nav-item span:last-child, .nav-footer { display: none; }
+    .nav-item { justify-content: center; }
+    .main { padding: 24px 18px; }
+    .chat-panel { width: calc(100vw - 32px); right: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <nav class="nav">
+    <div class="brand">
+      <div class="brand-mark">V</div>
+      <div>
+        <div class="brand-text">Vantage</div>
+        <div class="brand-tag">a view, not a promise</div>
+      </div>
+    </div>
+    <button class="nav-item active" data-page="search" onclick="goTo('search')">
+      <span class="dot"></span><span>Search</span>
+    </button>
+    <button class="nav-item" data-page="forecast" onclick="goTo('forecast')">
+      <span class="dot"></span><span>Forecast</span>
+    </button>
+    <button class="nav-item" data-page="compare" onclick="goTo('compare')">
+      <span class="dot"></span><span>Compare</span>
+    </button>
+    <div class="nav-footer">
+      <div class="status"><span class="status-dot" id="apiStatusDot"></span><span id="apiStatusText">checking API…</span></div>
+      15 tickers · 1-week horizon · backtested, not advice
+    </div>
+  </nav>
+
+  <main class="main">
+    <!-- SEARCH PAGE -->
+    <section id="page-search">
+      <h1 class="page-title">Search</h1>
+      <p class="page-sub">Pick from the 15 stocks this model is trained on.</p>
+      <div class="search-row">
+        <input class="search-input" id="searchInput" placeholder="Search by ticker or company name…" oninput="renderStockGrid()">
+      </div>
+      <div class="stock-grid" id="stockGrid"></div>
+
+      <div class="selected-panel" id="selectedPanel" style="display:none;">
+        <div class="card">
+          <div class="selected-header">
+            <h3 id="selTickerName"></h3>
+            <button class="btn-predict" id="predictBtn" onclick="predictSelected()">Predict next week →</button>
+          </div>
+          <div id="selQuoteDetail" style="font-family: var(--font-mono); font-size: 13px; color: var(--ink-soft);"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- FORECAST PAGE -->
+    <section id="page-forecast" style="display:none;"></section>
+
+    <!-- COMPARE PAGE -->
+    <section id="page-compare" style="display:none;">
+      <h1 class="page-title">Compare</h1>
+      <p class="page-sub">Select 2–5 stocks to forecast side by side.</p>
+      <div class="compare-picker" id="comparePicker"></div>
+      <div id="compareResult"></div>
+    </section>
+  </main>
+</div>
+
+<button class="chat-fab" id="chatFab" onclick="toggleChat()">💬</button>
+<div class="chat-panel" id="chatPanel">
+  <div class="chat-head">
+    <div class="t">Ask Vantage</div>
+    <div class="s" id="chatSub">e.g. "what will tesla be next week"</div>
+  </div>
+  <div class="chat-body" id="chatBody">
+    <div class="chat-hint">Ask about any of the 15 supported stocks. The reply is generated from the real forecasting model, not guessed by the chatbot.</div>
+  </div>
+  <div class="chat-input-row">
+    <input class="chat-input" id="chatInput" placeholder="Type a message…" onkeydown="if(event.key==='Enter') sendChat()">
+    <button class="chat-send" id="chatSendBtn" onclick="sendChat()">Send</button>
+  </div>
+</div>
+
+<script>
+// ------------------------------------------------------------------
+// CONFIG — change this if your backend runs somewhere other than localhost:8000
+// ------------------------------------------------------------------
+const API_BASE = "http://localhost:8000/api";
+
+// Fallback list used only if the backend is unreachable, so the UI still renders.
+const FALLBACK_STOCKS = [
+  ["AAPL","Apple Inc."],["MSFT","Microsoft Corp."],["GOOGL","Alphabet Inc."],
+  ["AMZN","Amazon.com Inc."],["TSLA","Tesla Inc."],["NVDA","NVIDIA Corp."],
+  ["META","Meta Platforms"],["NFLX","Netflix Inc."],["JPM","JPMorgan Chase"],
+  ["V","Visa Inc."],["DIS","Walt Disney Co."],["INTC","Intel Corp."],
+  ["AMD","Advanced Micro Devices"],["KO","Coca-Cola Co."],["PEP","PepsiCo Inc."]
+];
+
+let state = {
+  stocks: [],
+  quotes: {},          // ticker -> quote object (cached)
+  selected: null,       // ticker selected on search page
+  currentForecastTicker: null,
+  compareSelection: [],
+  apiOk: false,
+};
+
+// ---------------- API helpers ----------------
+async function apiGet(path) {
+  const res = await fetch(`${API_BASE}${path}`);
+  if (!res.ok) throw new Error((await res.json().catch(()=>({}))).detail || `Request failed (${res.status})`);
+  return res.json();
+}
+async function apiPost(path, body) {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)
+  });
+  if (!res.ok) throw new Error((await res.json().catch(()=>({}))).detail || `Request failed (${res.status})`);
+  return res.json();
+}
+
+// ---------------- Boot ----------------
+async function init() {
+  try {
+    state.stocks = await apiGet("/stocks");
+    setApiStatus(true);
+  } catch (e) {
+    state.stocks = FALLBACK_STOCKS.map(([ticker,name]) => ({ticker, name}));
+    setApiStatus(false);
+  }
+  renderStockGrid();
+  renderComparePicker();
+  fetchAllQuotesLazily();
+}
+
+function setApiStatus(ok) {
+  state.apiOk = ok;
+  document.getElementById("apiStatusDot").className = "status-dot " + (ok ? "ok" : "bad");
+  document.getElementById("apiStatusText").textContent = ok ? "API connected" : "API unreachable — check backend";
+}
+
+async function fetchAllQuotesLazily() {
+  for (const s of state.stocks) {
+    try {
+      const q = await apiGet(`/stocks/${s.ticker}/quote`);
+      state.quotes[s.ticker] = q;
+      renderStockGrid();
+    } catch (e) { /* leave as loading state for this card */ }
+  }
+}
+
+// ---------------- Navigation ----------------
+function goTo(page) {
+  document.querySelectorAll(".nav-item").forEach(el => el.classList.toggle("active", el.dataset.page === page));
+  ["search","forecast","compare"].forEach(p => {
+    document.getElementById(`page-${p}`).style.display = (p === page) ? "block" : "none";
+  });
+
+  if (page === "forecast") {
+    if (state.currentForecastTicker) {
+      renderForecast(state.currentForecastTicker);
+    } else {
+      document.getElementById("page-forecast").innerHTML = `
+        <h1 class="page-title">Forecast</h1>
+        <div class="empty-state">
+          <div class="icon">◌</div>
+          No stock selected yet. Go to Search and click "Predict next week",
+          or ask the chatbot about one of the 15 supported stocks.
+        </div>`;
+    }
+  }
+}
+
+// ---------------- Search page ----------------
+function renderStockGrid() {
+  const q = document.getElementById("searchInput").value.trim().toLowerCase();
+  const grid = document.getElementById("stockGrid");
+  const filtered = state.stocks.filter(s =>
+    s.ticker.toLowerCase().includes(q) || s.name.toLowerCase().includes(q)
+  );
+  grid.innerHTML = filtered.map(s => {
+    const quote = state.quotes[s.ticker];
+    const sel = state.selected === s.ticker ? "selected" : "";
+    const priceHtml = quote
+      ? `<div class="price-row">
+           <span class="price">$${quote.price.toFixed(2)}</span>
+           <span class="change ${quote.change >= 0 ? "up" : "down"}">${quote.change >= 0 ? "+" : ""}${quote.change_pct.toFixed(2)}%</span>
+         </div>`
+      : `<div class="loading-line"></div>`;
+    return `
+      <div class="stock-card ${sel}" onclick="selectStock('${s.ticker}')">
+        <div class="ticker">${s.ticker}</div>
+        <div class="name">${s.name}</div>
+        ${priceHtml}
+      </div>`;
+  }).join("");
+}
+
+function selectStock(ticker) {
+  state.selected = ticker;
+  renderStockGrid();
+  const s = state.stocks.find(x => x.ticker === ticker);
+  const q = state.quotes[ticker];
+  document.getElementById("selectedPanel").style.display = "block";
+  document.getElementById("selTickerName").textContent = `${ticker} — ${s.name}`;
+  document.getElementById("selQuoteDetail").textContent = q
+    ? `$${q.price.toFixed(2)}  ·  day range $${q.day_low.toFixed(2)}–$${q.day_high.toFixed(2)}  ·  vol ${q.volume.toLocaleString()}`
+    : "Fetching quote…";
+}
+
+function predictSelected() {
+  if (!state.selected) return;
+  goTo("forecast");
+  renderForecast(state.selected);
+}
+
+// ---------------- Forecast page ----------------
+async function renderForecast(ticker) {
+  state.currentForecastTicker = ticker;
+  const el = document.getElementById("page-forecast");
+  el.innerHTML = `<div class="empty-state"><div class="icon">◌</div>Running the forecasting pipeline for ${ticker}…</div>`;
+
+  try {
+    const f = await apiGet(`/forecast/${ticker}`);
+    renderForecastResult(f);
+  } catch (e) {
+    el.innerHTML = `<h1 class="page-title">Forecast</h1><div class="error-banner">Couldn't get a forecast for ${ticker}: ${e.message}</div>`;
+  }
+}
+
+function renderForecastResult(f) {
+  const stockMeta = state.stocks.find(s => s.ticker === f.ticker) || {name: ""};
+  const range = f.predicted_high - f.predicted_low;
+  const lo = f.predicted_low - range * 0.6;
+  const hi = f.predicted_high + range * 0.6;
+  const pct = v => ((v - lo) / (hi - lo)) * 100;
+  const bandLeft = pct(f.predicted_low);
+  const bandWidth = pct(f.predicted_high) - bandLeft;
+  const markerPos = pct(f.current_price);
+
+  const up = f.p_up, down = f.p_down, flat = f.p_flat;
+
+  document.getElementById("page-forecast").innerHTML = `
+    <h1 class="page-title">Forecast</h1>
+    <p class="page-sub">1-week outlook, generated by the trained model — not a guarantee.</p>
+    <div class="card">
+      <div class="forecast-header">
+        <span class="forecast-ticker">${f.ticker}</span>
+        <span class="forecast-name">${stockMeta.name}</span>
+      </div>
+      <div class="forecast-price">Current: $${f.current_price.toFixed(2)} → Predicted: $${f.predicted_price.toFixed(2)}</div>
+
+      <div class="ribbon-wrap">
+        <div class="ribbon-labels"><span>$${lo.toFixed(2)}</span><span>predicted range</span><span>$${hi.toFixed(2)}</span></div>
+        <div class="ribbon">
+          <div class="ribbon-band" style="left:${bandLeft}%; width:${bandWidth}%;"></div>
+          <div class="ribbon-marker" style="left:${markerPos}%;"></div>
+        </div>
+        <div class="ribbon-caption">gold band = predicted high–low · navy line = current price</div>
+      </div>
+
+      <div class="prob-grid">
+        <div class="prob-card down"><div class="label">Down</div><div class="value">${(down*100).toFixed(0)}%</div></div>
+        <div class="prob-card flat"><div class="label">Flat</div><div class="value">${(flat*100).toFixed(0)}%</div></div>
+        <div class="prob-card up"><div class="label">Up</div><div class="value">${(up*100).toFixed(0)}%</div></div>
+      </div>
+
+      <div class="metrics-row">
+        <div class="metric">
+          <div class="label">Backtested directional accuracy</div>
+          <div class="value">${(f.backtested_accuracy.directional_accuracy*100).toFixed(1)}%</div>
+          <div class="sub">baseline: ${(f.backtested_accuracy.baseline_directional_accuracy*100).toFixed(1)}%</div>
+        </div>
+        <div class="metric">
+          <div class="label">Mean abs. error</div>
+          <div class="value">${f.backtested_accuracy.mae_pct.toFixed(2)}%</div>
+          <div class="sub">on held-out test data</div>
+        </div>
+        <div class="metric">
+          <div class="label">Test samples</div>
+          <div class="value">${f.backtested_accuracy.test_samples}</div>
+          <div class="sub">chronological split</div>
+        </div>
+      </div>
+
+      <div class="disclaimer">This is a backtested statistical estimate from a model trained on past price data, not financial advice. Markets are influenced by far more than historical prices — treat this as one input, not a signal to act on.</div>
+    </div>
+  `;
+}
+
+// ---------------- Compare page ----------------
+function renderComparePicker() {
+  const el = document.getElementById("comparePicker");
+  el.innerHTML = state.stocks.map(s => `
+    <button class="chip ${state.compareSelection.includes(s.ticker) ? "active" : ""}" onclick="toggleCompare('${s.ticker}')">${s.ticker}</button>
+  `).join("");
+}
+
+function toggleCompare(ticker) {
+  const i = state.compareSelection.indexOf(ticker);
+  if (i >= 0) state.compareSelection.splice(i, 1);
+  else if (state.compareSelection.length < 5) state.compareSelection.push(ticker);
+  renderComparePicker();
+  if (state.compareSelection.length >= 2) runCompare();
+  else document.getElementById("compareResult").innerHTML = `<div class="empty-state">Pick at least 2 stocks to compare.</div>`;
+}
+
+async function runCompare() {
+  const el = document.getElementById("compareResult");
+  el.innerHTML = `<div class="empty-state"><div class="icon">◌</div>Running forecasts…</div>`;
+  try {
+    const results = await apiPost("/compare", {tickers: state.compareSelection});
+    el.innerHTML = `
+      <div class="card">
+        <table class="compare-table">
+          <thead><tr>
+            <th>Ticker</th><th>Current</th><th>Predicted</th><th>Range</th>
+            <th>P(Up)</th><th>P(Down)</th><th>P(Flat)</th><th>Accuracy</th>
+          </tr></thead>
+          <tbody>
+            ${results.map(r => {
+              const name = (state.stocks.find(s => s.ticker === r.ticker) || {}).name || "";
+              return `<tr>
+                <td>${r.ticker}<div class="tname">${name}</div></td>
+                <td>$${r.current_price.toFixed(2)}</td>
+                <td>$${r.predicted_price.toFixed(2)}</td>
+                <td>$${r.predicted_low.toFixed(2)}–$${r.predicted_high.toFixed(2)}</td>
+                <td style="color:var(--up)">${(r.p_up*100).toFixed(0)}%</td>
+                <td style="color:var(--down)">${(r.p_down*100).toFixed(0)}%</td>
+                <td style="color:var(--flat)">${(r.p_flat*100).toFixed(0)}%</td>
+                <td>${(r.backtested_accuracy.directional_accuracy*100).toFixed(0)}%</td>
+              </tr>`;
+            }).join("")}
+          </tbody>
+        </table>
+      </div>`;
+  } catch (e) {
+    el.innerHTML = `<div class="error-banner">Comparison failed: ${e.message}</div>`;
+  }
+}
+
+// ---------------- Chat widget (present on every page) ----------------
+function toggleChat() {
+  document.getElementById("chatPanel").classList.toggle("open");
+}
+
+async function sendChat() {
+  const input = document.getElementById("chatInput");
+  const msg = input.value.trim();
+  if (!msg) return;
+  input.value = "";
+  appendMsg(msg, "user");
+
+  const sendBtn = document.getElementById("chatSendBtn");
+  sendBtn.disabled = true;
+  const typingId = appendMsg("…", "bot");
+
+  try {
+    const res = await apiPost("/chat", {message: msg});
+    updateMsg(typingId, res.reply);
+    if (res.data) {
+      state.currentForecastTicker = res.data.ticker;
+      renderForecastResult(res.data); // reuse the same data the chat reply was built from — no extra API call
+    }
+  } catch (e) {
+    updateMsg(typingId, `Something went wrong reaching the backend: ${e.message}`, true);
+  } finally {
+    sendBtn.disabled = false;
+  }
+}
+
+let msgCounter = 0;
+function appendMsg(text, who) {
+  const id = `msg-${++msgCounter}`;
+  const body = document.getElementById("chatBody");
+  const div = document.createElement("div");
+  div.className = `msg ${who}`;
+  div.id = id;
+  div.textContent = text;
+  body.appendChild(div);
+  body.scrollTop = body.scrollHeight;
+  return id;
+}
+function updateMsg(id, text, isErr=false) {
+  const el = document.getElementById(id);
+  el.textContent = text;
+  if (isErr) el.classList.add("err");
+  document.getElementById("chatBody").scrollTop = document.getElementById("chatBody").scrollHeight;
+}
+
+init();
+</script>
+</body>
+</html>
