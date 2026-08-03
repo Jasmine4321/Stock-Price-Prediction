@@ -15,13 +15,15 @@ time series leaks future information into training.
 import numpy as np
 import pandas as pd
 
-from config import LOOKBACK_DAYS, HORIZON_DAYS, FLAT_THRESHOLD_PCT
+from config import LOOKBACK_DAYS
 from ml.features import FEATURE_COLUMNS
 
 
-def make_sequences(feat_df: pd.DataFrame):
+def make_sequences(feat_df: pd.DataFrame, horizon_days: int, flat_threshold_pct: float):
     """
     feat_df must already have FEATURE_COLUMNS + 'close' (output of build_features).
+    horizon_days: how many trading days ahead to predict (e.g. 1, 5, 21, 252).
+    flat_threshold_pct: moves smaller than this %, over this horizon, are labeled "flat".
     Returns X (n, LOOKBACK_DAYS, n_features), y_return (n,), y_direction (n,)
     """
     values = feat_df[FEATURE_COLUMNS].values
@@ -30,10 +32,10 @@ def make_sequences(feat_df: pd.DataFrame):
     X, y_return, y_direction = [], [], []
 
     n = len(feat_df)
-    last_start = n - LOOKBACK_DAYS - HORIZON_DAYS
+    last_start = n - LOOKBACK_DAYS - horizon_days
     for start in range(last_start):
         end = start + LOOKBACK_DAYS
-        target_idx = end + HORIZON_DAYS - 1
+        target_idx = end + horizon_days - 1
 
         window = values[start:end]
         current_price = close[end - 1]
@@ -41,9 +43,9 @@ def make_sequences(feat_df: pd.DataFrame):
 
         future_return = (future_price - current_price) / current_price
 
-        if future_return * 100 > FLAT_THRESHOLD_PCT:
+        if future_return * 100 > flat_threshold_pct:
             direction = 2  # up
-        elif future_return * 100 < -FLAT_THRESHOLD_PCT:
+        elif future_return * 100 < -flat_threshold_pct:
             direction = 0  # down
         else:
             direction = 1  # flat
@@ -55,8 +57,8 @@ def make_sequences(feat_df: pd.DataFrame):
     return np.array(X, dtype=np.float32), np.array(y_return, dtype=np.float32), np.array(y_direction, dtype=np.int64)
 
 
-def chronological_split(X, y_return, y_direction, train_frac=0.7, val_frac=0.15):
-    """No shuffling -- earliest data trains, latest data tests."""
+def chronological_split(X, y_return, y_direction, train_frac=0.8, val_frac=0.1):
+    """No shuffling -- earliest data trains, latest data tests. Default: 80% train / 10% val / 10% test."""
     n = len(X)
     train_end = int(n * train_frac)
     val_end = int(n * (train_frac + val_frac))

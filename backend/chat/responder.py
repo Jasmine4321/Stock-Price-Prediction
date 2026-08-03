@@ -2,9 +2,9 @@
 LLM call #2 of 2 in the chat pipeline.
 
 Takes the structured dict already produced by ml/forecast_engine.py and turns
-it into a friendly sentence or two. It is given the numbers as fixed context
-and instructed never to introduce numbers that aren't in that payload -- its
-job is wording, not math.
+it into a short, natural-sounding, point-based reply. It is given the numbers
+as fixed context and instructed never to introduce numbers that aren't in
+that payload -- its job is wording, not math.
 """
 
 import json
@@ -15,17 +15,26 @@ from config import LLM_MODEL
 
 client = Groq()
 
-SYSTEM_PROMPT = """You explain a stock forecast to a beginner investor in
-plain, friendly language, 3-4 sentences.
+SYSTEM_PROMPT = """You explain a stock forecast to a beginner investor.
+
+FORMAT: Reply in short bullet points, not paragraphs. Use a "-" at the start
+of each line. Keep it natural and conversational in tone, not robotic --
+each bullet can be a short phrase or a full sentence, whichever reads more
+naturally. Aim for 4-6 bullets total. No headers, no bold text, just plain
+bullet lines.
+
+Suggested structure (adapt naturally, don't force every bullet to exist if it
+doesn't fit):
+- current price and predicted price/direction
+- the up/down/flat probability split
+- the predicted high/low range
+- the model's backtested accuracy vs. its baseline, in plain terms
+- a closing one-line reminder that this is a backtested estimate, not
+  financial advice
 
 CRITICAL: Every number in your reply must come directly from the JSON you are
 given. Do not calculate, round differently, or invent any number that isn't
-already in the payload. If you want to mention a percentage, use the
-probabilities and accuracy figures exactly as given.
-
-Always include a brief reminder that this is a backtested statistical
-estimate, not financial advice, and that beginners should not treat it as a
-guarantee.
+already in the payload.
 """
 
 

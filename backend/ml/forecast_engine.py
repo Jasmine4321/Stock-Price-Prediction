@@ -1,13 +1,6 @@
 """
-This is the "real ML" the chat layer calls into. Given a ticker, it:
-  1. pulls recent history
-  2. builds features
-  3. runs the trained LSTM
-  4. converts the raw regression/classification outputs into the
-     high/low/mean/probability shape the frontend and chat reply expect
-
-No LLM is used anywhere in this file. If a ticker's model isn't trained yet,
-this raises -- callers should validate against SUPPORTED_STOCKS first.
+Loads a trained model for a given (ticker, horizon) and runs real inference.
+No LLM involved anywhere in this file.
 """
 
 import json
@@ -17,7 +10,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from config import MODEL_DIR, LOOKBACK_DAYS, HORIZON_DAYS, SUPPORTED_STOCKS
+from config import MODEL_DIR, LOOKBACK_DAYS, HORIZONS, DEFAULT_HORIZON, SUPPORTED_STOCKS
 from data.fetcher import get_history
 from ml.features import build_features, FEATURE_COLUMNS
 from ml.lstm_model import StockLSTM
@@ -25,15 +18,17 @@ from ml.lstm_model import StockLSTM
 _MODEL_CACHE = {}
 
 
-def _load(ticker: str):
-    if ticker in _MODEL_CACHE:
-        return _MODEL_CACHE[ticker]
+def _load(ticker: str, horizon_key: str):
+    cache_key = f"{ticker}:{horizon_key}"
+    if cache_key in _MODEL_CACHE:
+        return _MODEL_CACHE[cache_key]
 
-    model_dir = os.path.join(MODEL_DIR, ticker)
+    model_dir = os.path.join(MODEL_DIR, ticker, horizon_key)
     model_path = os.path.join(model_dir, "model.pt")
     if not os.path.exists(model_path):
         raise FileNotFoundError(
-            f"No trained model for {ticker}. Run `python -m ml.train --ticker {ticker}` first."
+            f"No trained model for {ticker} [{horizon_key}]. "
+            f"Run `python -m ml.train --ticker {ticker} --horizon {horizon_key}` first."
         )
 
     model = StockLSTM(n_features=len(FEATURE_COLUMNS))
@@ -45,15 +40,17 @@ def _load(ticker: str):
     with open(os.path.join(model_dir, "metrics.json")) as f:
         metrics = json.load(f)
 
-    _MODEL_CACHE[ticker] = (model, scaler, metrics)
-    return _MODEL_CACHE[ticker]
+    _MODEL_CACHE[cache_key] = (model, scaler, metrics)
+    return _MODEL_CACHE[cache_key]
 
 
-def run_forecast(ticker: str) -> dict:
+def run_forecast(ticker: str, horizon_key: str = DEFAULT_HORIZON) -> dict:
     if ticker not in SUPPORTED_STOCKS:
         raise ValueError(f"{ticker} is not one of the supported stocks")
+    if horizon_key not in HORIZONS:
+        raise ValueError(f"{horizon_key} is not a supported horizon. Choose from {list(HORIZONS.keys())}")
 
-    model, scaler, metrics = _load(ticker)
+    model, scaler, metrics = _load(ticker, horizon_key)
 
     df = get_history(ticker)
     feat = build_features(df)
@@ -65,25 +62,23 @@ def run_forecast(ticker: str) -> dict:
     std = np.array(scaler["std"])
     window_norm = (window - mean) / std
 
-    x = torch.tensor(window_norm, dtype=torch.float32).unsqueeze(0)  # (1, lookback, n_features)
+    x = torch.tensor(window_norm, dtype=torch.float32).unsqueeze(0)
 
     with torch.no_grad():
         pred_mean, pred_logvar, dir_logits = model(x)
         pred_return = pred_mean.item()
         pred_std = float(np.exp(0.5 * pred_logvar.item()))
-        probs = F.softmax(dir_logits, dim=1).squeeze(0).tolist()  # [p_down, p_flat, p_up]
+        probs = F.softmax(dir_logits, dim=1).squeeze(0).tolist()
 
     current_price = float(feat["close"].iloc[-1])
     predicted_price = current_price * (1 + pred_return)
-
-    # High/low band from the model's own predicted uncertainty (1 std dev),
-    # not an arbitrary fixed percentage.
     predicted_high = current_price * (1 + pred_return + pred_std)
     predicted_low = current_price * (1 + pred_return - pred_std)
 
     return {
         "ticker": ticker,
-        "horizon_days": HORIZON_DAYS,
+        "horizon": horizon_key,
+        "horizon_days": HORIZONS[horizon_key]["days"],
         "current_price": round(current_price, 2),
         "predicted_price": round(predicted_price, 2),
         "predicted_high": round(max(predicted_high, predicted_low), 2),

@@ -1,18 +1,19 @@
 """
-Trains one LSTM per supported ticker.
+Trains one LSTM per (ticker, horizon) combination -- 15 stocks x 4 horizons
+= 60 models by default. Each horizon gets its own model because the
+relationship between a 60-day window and "tomorrow" is very different from
+the relationship between that same window and "one year from now".
 
 Run:
-    python -m ml.train              # trains all 15
-    python -m ml.train --ticker TSLA   # trains just one
+    python -m ml.train                          # trains all tickers, all horizons
+    python -m ml.train --ticker TSLA             # one ticker, all horizons
+    python -m ml.train --ticker TSLA --horizon 7d  # one ticker, one horizon
 
-Saves per ticker into ml/models/{ticker}/:
-    model.pt        - trained weights
-    scaler.json      - feature mean/std used to normalize inputs
-    metrics.json      - backtested accuracy on the held-out test split,
-                        including a naive baseline for comparison
+Saves per (ticker, horizon) into ml/models/{ticker}/{horizon}/:
+    model.pt, scaler.json, metrics.json
 
-The metrics.json file is what the forecast API reports as "accuracy" --
-never a training-time number, always the chronological, held-out test result.
+metrics.json is what the API reports as "accuracy" -- always the
+chronological, held-out test result, never a training-time number.
 """
 
 import argparse
@@ -24,7 +25,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from config import SUPPORTED_STOCKS, MODEL_DIR, HORIZON_DAYS
+from config import SUPPORTED_STOCKS, MODEL_DIR, HORIZONS
 from data.fetcher import get_history
 from ml.features import build_features, FEATURE_COLUMNS
 from ml.dataset import make_sequences, chronological_split
@@ -34,21 +35,22 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def gaussian_nll_loss(mean, logvar, target):
-    """Negative log-likelihood of target under N(mean, exp(logvar)).
-    Lets the model express uncertainty -- wider logvar on choppier stocks --
-    instead of forcing every prediction into the same fixed +/- band."""
     var = torch.exp(logvar)
     return (0.5 * torch.log(var) + 0.5 * (target - mean) ** 2 / var).mean()
 
 
-def train_one_ticker(ticker: str, epochs: int = 40, batch_size: int = 32, lr: float = 1e-3):
-    print(f"\n=== Training {ticker} ===")
+def train_one(ticker: str, horizon_key: str, epochs: int = 40, batch_size: int = 32, lr: float = 1e-3):
+    horizon_days = HORIZONS[horizon_key]["days"]
+    flat_pct = HORIZONS[horizon_key]["flat_threshold_pct"]
+
+    print(f"\n=== Training {ticker} [{horizon_key}] ===")
     df = get_history(ticker)
     feat = build_features(df)
-    X, y_return, y_direction = make_sequences(feat)
+    X, y_return, y_direction = make_sequences(feat, horizon_days, flat_pct)
 
-    if len(X) < 200:
-        print(f"Not enough data for {ticker} ({len(X)} sequences) -- skipping")
+    min_required = 200 if horizon_days < 100 else 80  # 1y horizon inherently yields fewer usable windows
+    if len(X) < min_required:
+        print(f"Not enough data for {ticker} [{horizon_key}] ({len(X)} sequences) -- skipping")
         return
 
     splits = chronological_split(X, y_return, y_direction)
@@ -56,8 +58,6 @@ def train_one_ticker(ticker: str, epochs: int = 40, batch_size: int = 32, lr: fl
     X_val, yr_val, yd_val = splits["val"]
     X_test, yr_test, yd_test = splits["test"]
 
-    # Normalize features using TRAIN stats only -- using val/test stats here
-    # would leak future information into the normalization.
     mean = X_train.reshape(-1, X_train.shape[-1]).mean(axis=0)
     std = X_train.reshape(-1, X_train.shape[-1]).std(axis=0) + 1e-8
 
@@ -102,13 +102,13 @@ def train_one_ticker(ticker: str, epochs: int = 40, batch_size: int = 32, lr: fl
             print(f"epoch {epoch:>3} | val_loss {val_loss:.5f}")
 
     model.load_state_dict(best_state)
-    metrics = evaluate(model, X_test, yr_test, yd_test, mean, std)
-    save_model(ticker, model, mean, std, metrics)
-    print(f"{ticker}: directional_accuracy={metrics['directional_accuracy']:.3f} "
+    metrics = evaluate(model, X_test, yr_test, yd_test, mean, std, horizon_days)
+    save_model(ticker, horizon_key, model, mean, std, metrics)
+    print(f"{ticker} [{horizon_key}]: directional_accuracy={metrics['directional_accuracy']:.3f} "
           f"(baseline={metrics['baseline_directional_accuracy']:.3f}) mae_pct={metrics['mae_pct']:.2f}")
 
 
-def evaluate(model, X_test, yr_test, yd_test, mean, std):
+def evaluate(model, X_test, yr_test, yd_test, mean, std, horizon_days):
     model.eval()
     X_norm = (X_test - mean) / std
     with torch.no_grad():
@@ -119,22 +119,20 @@ def evaluate(model, X_test, yr_test, yd_test, mean, std):
     directional_accuracy = float((dir_pred == yd_test).mean())
     mae_pct = float(np.mean(np.abs(mean_pred - yr_test)) * 100)
 
-    # Naive baseline: "next week's direction = flat" is the naive persistence
-    # call. Reporting this alongside the model's number keeps the accuracy claim honest.
-    baseline_pred = np.ones_like(yd_test)  # always predict "flat" (class 1)
+    baseline_pred = np.ones_like(yd_test)  # naive: always predict "flat"
     baseline_directional_accuracy = float((baseline_pred == yd_test).mean())
 
     return {
         "directional_accuracy": directional_accuracy,
         "baseline_directional_accuracy": baseline_directional_accuracy,
         "mae_pct": mae_pct,
-        "horizon_days": HORIZON_DAYS,
+        "horizon_days": horizon_days,
         "test_samples": int(len(yd_test)),
     }
 
 
-def save_model(ticker, model, mean, std, metrics):
-    out_dir = os.path.join(MODEL_DIR, ticker)
+def save_model(ticker, horizon_key, model, mean, std, metrics):
+    out_dir = os.path.join(MODEL_DIR, ticker, horizon_key)
     os.makedirs(out_dir, exist_ok=True)
     torch.save(model.state_dict(), os.path.join(out_dir, "model.pt"))
     with open(os.path.join(out_dir, "scaler.json"), "w") as f:
@@ -146,12 +144,16 @@ def save_model(ticker, model, mean, std, metrics):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--ticker", default=None, help="Train a single ticker, or omit to train all 15")
+    parser.add_argument("--horizon", default=None, choices=list(HORIZONS.keys()),
+                         help="Train a single horizon (1d/7d/30d/1y), or omit to train all 4")
     args = parser.parse_args()
 
     tickers = [args.ticker] if args.ticker else list(SUPPORTED_STOCKS.keys())
+    horizon_keys = [args.horizon] if args.horizon else list(HORIZONS.keys())
+
     for t in tickers:
-        try:
-            train_one_ticker(t)
-            print(f"{t} Trained")
-        except Exception as e:
-            print(f"Failed on {t}: {e}")
+        for h in horizon_keys:
+            try:
+                train_one(t, h)
+            except Exception as e:
+                print(f"Failed on {t} [{h}]: {e}")

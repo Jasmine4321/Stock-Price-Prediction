@@ -1,17 +1,28 @@
 """
 Pulls historical OHLCV data for the 15 supported tickers.
 
-Real source: yfinance (free, no API key).
-Offline fallback: generate a synthetic random-walk price series so the rest
-of the pipeline (features -> model -> forecast) can be built and tested
-without needing a live internet connection. Swap USE_SYNTHETIC to False
-once you're running this with internet access.
+Primary source: yfinance (free, no API key) -- can be intermittently
+blocked/rate-limited by Yahoo. Falls back to Stooq automatically if
+yfinance fails after retries, since Stooq has been more reliable in
+practice. Both sources return the same shape, so the rest of the
+pipeline (features -> model -> forecast) never needs to know which
+one actually served the data.
+
+Offline fallback: generate a synthetic random-walk price series so the
+rest of the pipeline can be built and tested without internet. Swap
+USE_SYNTHETIC to True only for that offline dev case.
 """
+
+import time
 
 import numpy as np
 import pandas as pd
+import yfinance as yf
 
-USE_SYNTHETIC = False  # flip to True only for offline dev without internet
+USE_SYNTHETIC = False
+
+_CACHE = {}
+_CACHE_TTL_SECONDS = 300  # 5 minutes -- avoids re-hitting the data source on every page load
 
 
 def get_history(ticker: str, period: str = "5y") -> pd.DataFrame:
@@ -22,16 +33,67 @@ def get_history(ticker: str, period: str = "5y") -> pd.DataFrame:
     if USE_SYNTHETIC:
         return _synthetic_history(ticker)
 
-    import yfinance as yf
+    cache_key = f"{ticker}:{period}"
+    cached = _CACHE.get(cache_key)
+    if cached and (time.time() - cached["ts"]) < _CACHE_TTL_SECONDS:
+        return cached["df"]
 
-    df = yf.download(ticker, period=period, interval="1d", progress=False, auto_adjust=True)
-    if df.empty:
-        raise ValueError(f"No data returned for {ticker}")
+    df = None
+    try:
+        df = _fetch_yfinance(ticker, period)
+    except Exception as e:
+        print(f"[fetcher] yfinance failed for {ticker} ({e}); trying Stooq")
 
-    df.columns = [c.lower() if isinstance(c, str) else c[0].lower() for c in df.columns]
-    df = df[["open", "high", "low", "close", "volume"]].dropna()
-    df.index.name = "date"
+    if df is None or df.empty:
+        try:
+            df = _fetch_stooq(ticker, period)
+        except Exception as e:
+            raise ValueError(f"No data returned for {ticker} from yfinance or Stooq. Last error: {e}")
+
+    if df is None or df.empty:
+        raise ValueError(f"No data returned for {ticker} from either source")
+
+    _CACHE[cache_key] = {"df": df, "ts": time.time()}
     return df
+
+
+def _fetch_yfinance(ticker: str, period: str, retries: int = 2) -> pd.DataFrame:
+    last_error = None
+    for attempt in range(retries):
+        try:
+            df = yf.download(ticker, period=period, interval="1d", progress=False, auto_adjust=True)
+            if not df.empty:
+                df.columns = [c.lower() if isinstance(c, str) else c[0].lower() for c in df.columns]
+                df = df[["open", "high", "low", "close", "volume"]].dropna()
+                df.index.name = "date"
+                return df
+        except Exception as e:
+            last_error = e
+        time.sleep(1.0 * (attempt + 1))
+    raise ValueError(f"yfinance returned no data after {retries} attempts ({last_error})")
+
+
+def _fetch_stooq(ticker: str, period: str, retries: int = 3) -> pd.DataFrame:
+    symbol = f"{ticker.lower()}.us"
+    url = f"https://stooq.com/q/d/l/?s={symbol}&i=d"
+
+    last_error = None
+    for attempt in range(retries):
+        try:
+            df = pd.read_csv(url)
+            if not df.empty and "Date" in df.columns:
+                df["Date"] = pd.to_datetime(df["Date"])
+                df = df.set_index("Date").sort_index()
+                df.columns = [c.lower() for c in df.columns]
+                df = df[["open", "high", "low", "close", "volume"]].dropna()
+                df.index.name = "date"
+                if period == "5y":
+                    df = df[df.index >= (df.index.max() - pd.DateOffset(years=5))]
+                return df
+        except Exception as e:
+            last_error = e
+        time.sleep(1.5 * (attempt + 1))
+    raise ValueError(f"Stooq returned no data after {retries} attempts ({last_error})")
 
 
 def get_latest_price(ticker: str) -> dict:

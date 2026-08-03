@@ -41,6 +41,7 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
 
     out["volume_change"] = out["volume"].pct_change(1)
 
+    out = out.replace([np.inf, -np.inf], np.nan)
     out = out.dropna()
     return out
 
